@@ -48,6 +48,84 @@ class FixedParameterTests(unittest.TestCase):
         )
 
 
+class CompactParseTests(unittest.TestCase):
+    def parse_fixture(self, parser, name="example.sor"):
+        with (TEST_DIRECTORY / name).open("rb") as fp:
+            return parser(fp)
+
+    def test_compact_parse_preserves_blocks_and_metadata(self):
+        expanded = self.parse_fixture(otdrparser.parse2)
+        compact = self.parse_fixture(otdrparser.parse_compact)
+
+        self.assertEqual(compact.keys(), expanded.keys())
+        self.assertEqual(compact["GenParams"], expanded["GenParams"])
+        self.assertEqual(compact["FxdParams"], expanded["FxdParams"])
+
+        expanded_data = expanded["DataPts"]
+        compact_data = compact["DataPts"]
+        for key in (
+            "name",
+            "number_of_data_points",
+            "number_of_traces",
+            "number_of_data_points2",
+            "scaling_factor",
+        ):
+            self.assertEqual(compact_data[key], expanded_data[key])
+
+    def test_compact_parse_returns_one_signal_array(self):
+        compact = self.parse_fixture(otdrparser.parse_compact)
+        data = compact["DataPts"]
+
+        self.assertNotIn("data_points", data)
+        self.assertIn("data_point_values", data)
+        self.assertEqual(
+            len(data["data_point_values"]),
+            data["number_of_data_points"],
+        )
+        self.assertGreater(data["sample_spacing_m"], 0)
+        self.assertEqual(data["start_distance_m"], 0.0)
+
+    def test_compact_signal_and_reconstructed_distances_match_parse2(self):
+        expanded = self.parse_fixture(otdrparser.parse2, "issue9.sor")["DataPts"]
+        compact = self.parse_fixture(
+            otdrparser.parse_compact, "issue9.sor"
+        )["DataPts"]
+
+        self.assertEqual(
+            compact["data_point_values"],
+            [signal for _, signal in expanded["data_points"]],
+        )
+
+        for index in (0, 1, len(compact["data_point_values"]) - 1):
+            reconstructed_distance = (
+                compact["start_distance_m"]
+                + index * compact["sample_spacing_m"]
+            )
+            self.assertAlmostEqual(
+                reconstructed_distance,
+                expanded["data_points"][index][0],
+            )
+
+    def test_existing_parsers_keep_expanded_data_points(self):
+        parsed_list = self.parse_fixture(otdrparser.parse)
+        parsed_dict = self.parse_fixture(otdrparser.parse2)
+        list_data = next(
+            block for block in parsed_list if block["name"] == "DataPts"
+        )
+
+        for data in (list_data, parsed_dict["DataPts"]):
+            self.assertIn("data_points", data)
+            self.assertNotIn("data_point_values", data)
+            self.assertNotIn("sample_spacing_m", data)
+
+    def test_compact_parse_accepts_in_memory_bytes(self):
+        content = (TEST_DIRECTORY / "example.sor").read_bytes()
+
+        data = otdrparser.parse_compact(io.BytesIO(content))
+
+        self.assertIn("data_point_values", data["DataPts"])
+
+
 class InvalidInputTests(unittest.TestCase):
     def test_latin_1_metadata_is_decoded(self):
         self.assertEqual(

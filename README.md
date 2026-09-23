@@ -6,14 +6,14 @@ It is a simplified re-implementation of the [pyOTDR](https://github.com/sid5432/
 the Telcordia SR-4731 standard as it is not freely available. 
 
 The **otdrparser** library differs from the **pyOTDR** project in multiple ways.
-* It's a small module with a ``parse2()`` function (and a now legacy ``parse()`` function).
+* It's a small module with ``parse2()`` and ``parse_compact()`` functions (and a now legacy ``parse()`` function).
 * It only supports Version 2 of the Telcordia SR-4731 standard.
 * Only single-trace OTDR files are supported. Multi-trace input is rejected explicitly.
 * The checksum block is read but not verified.
 * No attempt is made to accomodate vendor specific blocks.
 * I am certain **otdrparser** contains bugs. Please open a Github Issue if you find any.
 
-Both parser functions accept any binary file-like object, including an open file or an ``io.BytesIO`` instance.
+All parser functions accept any binary file-like object, including an open file or an ``io.BytesIO`` instance.
 
 ```python
 import io
@@ -35,6 +35,24 @@ blocks_from_memory = otdrparser.parse2(io.BytesIO(sor_bytes))
 * Vendor proprietary blocks are included as raw bytes.
 * Some data is interpreted. For example ```fibre_type=652``` is also interpreted as ```"ITU-T G.652 (standard single-mode fiber)"```
 * Truncated, malformed, and unsupported input raises ``OTDRParserError``.
+
+For signal-processing applications, ``parse_compact()`` avoids allocating a
+distance value and tuple for every sample:
+
+```python
+trace = otdrparser.parse_compact(io.BytesIO(sor_bytes))
+data = trace["DataPts"]
+
+data_point_values = data["data_point_values"]
+sample_spacing_m = data["sample_spacing_m"]
+start_distance_m = data["start_distance_m"]
+distance_m = start_distance_m + sample_index * sample_spacing_m
+```
+
+The other blocks and DataPts metadata have the same shape as in ``parse2()``.
+Only ``DataPts.data_points`` is replaced by the single ``data_point_values``
+array and its coordinate information. Data-point values are expressed in dB;
+spacing and start distance are expressed in metres.
 
 Output of the ``.parse2()`` method converted into JSON: [example-parse2.json](https://github.com/mjuenema/otdrparser/blob/main/example-parse2.json).
 

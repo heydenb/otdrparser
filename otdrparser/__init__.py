@@ -448,7 +448,13 @@ def parse_fxdparams_block(fp, block_numbytes):
     return data
 
 
-def parse_datapts_block(fp, block_numbytes, sample_spacing, index_of_refraction):
+def parse_datapts_block(
+    fp,
+    block_numbytes,
+    sample_spacing,
+    index_of_refraction,
+    compact=False,
+):
     """Parse Data Points block."""
 
     block_fp = io.BytesIO(read_exact(fp, block_numbytes))
@@ -468,7 +474,6 @@ def parse_datapts_block(fp, block_numbytes, sample_spacing, index_of_refraction)
     data.update({
         "number_of_data_points2": read_unsigned4(block_fp),
         "scaling_factor": read_unsigned2(block_fp),
-        "data_points": [],
     })
 
     if data["number_of_data_points2"] != data["number_of_data_points"]:
@@ -479,13 +484,31 @@ def parse_datapts_block(fp, block_numbytes, sample_spacing, index_of_refraction)
     if data["scaling_factor"] <= 0:
         raise OTDRParserError("DataPts scaling factor must be positive")
 
-    for n in range(0, data["number_of_data_points"]):
-        data["data_points"].append(
-            (
-                n * sample_spacing / 100000000 * C_M / index_of_refraction,
-                read_unsigned2(block_fp) * -data["scaling_factor"] / 1000000,
+    sample_spacing_m = (
+        sample_spacing / 100000000 * C_M / index_of_refraction
+    )
+
+    if compact:
+        data.update({
+            "data_point_values": [],
+            "sample_spacing_m": sample_spacing_m,
+            "start_distance_m": 0.0,
+        })
+
+        for _ in range(0, data["number_of_data_points"]):
+            data["data_point_values"].append(
+                read_unsigned2(block_fp) * -data["scaling_factor"] / 1000000
             )
-        )
+    else:
+        data["data_points"] = []
+
+        for n in range(0, data["number_of_data_points"]):
+            data["data_points"].append(
+                (
+                    n * sample_spacing / 100000000 * C_M / index_of_refraction,
+                    read_unsigned2(block_fp) * -data["scaling_factor"] / 1000000,
+                )
+            )
 
     block_fp.close()
 
@@ -583,8 +606,8 @@ def parse_unknown_block(fp, block_numbytes):
 
 
 
-def parse(fp):
-    """Parse trace file and return as list of parsed blocks."""
+def _parse(fp, compact_data_points=False):
+    """Parse trace file, optionally using the compact DataPts representation."""
 
     # The Map block is always the first block in the file.
     #
@@ -619,7 +642,11 @@ def parse(fp):
                     "DataPts block encountered before FxdParams block"
                 )
             block = parse_datapts_block(
-                fp, block_numbytes, sample_spacing, index_of_refraction
+                fp,
+                block_numbytes,
+                sample_spacing,
+                index_of_refraction,
+                compact=compact_data_points,
             )
         elif block_name == "KeyEvents":
             if index_of_refraction is None:
@@ -648,11 +675,30 @@ def parse(fp):
     return blocks
 
 
+def parse(fp):
+    """Parse trace file and return as list of parsed blocks."""
+
+    return _parse(fp)
+
+
 
 def parse2(fp):
     """Parse trace file and return as dictionary keyed by block name."""
 
     blocks = parse(fp)
+
+    return {block['name']: block for block in blocks}
+
+
+def parse_compact(fp):
+    """Parse a trace without expanding every sample into a distance/value pair.
+
+    The return value is a dictionary keyed by block name, like ``parse2()``.
+    Its ``DataPts`` block contains ``data_point_values``, ``sample_spacing_m``
+    and ``start_distance_m`` instead of ``data_points``.
+    """
+
+    blocks = _parse(fp, compact_data_points=True)
 
     return {block['name']: block for block in blocks}
 

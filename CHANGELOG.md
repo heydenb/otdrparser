@@ -3,6 +3,8 @@ All notable changes to this project will be documented in this file.
 
 ## Future
 * Add ``tools/`` scripts as I need them.
+* Add ``parse_compact()`` to return one signal array plus sample spacing instead
+  of expanding every sample into a distance/value pair.
 
 # 0.2.3 - 26-10-20
 * Correct the fixed-parameter units and signs for range, averaging time,
