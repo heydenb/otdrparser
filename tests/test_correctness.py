@@ -177,5 +177,46 @@ class InvalidInputTests(unittest.TestCase):
             )
 
 
+class GeneralParameterTests(unittest.TestCase):
+    @staticmethod
+    def block_without_comments():
+        return b"".join(
+            (
+                b"GenParams\x00",
+                b"EN",
+                b"cable\x00",
+                b"fiber\x00",
+                (657).to_bytes(2, "little", signed=True),
+                (1310).to_bytes(2, "little"),
+                b"location-a\x00",
+                b"location-b\x00",
+                b"cable-code\x00",
+                b"BC",
+                (0).to_bytes(4, "little", signed=True),
+                (0).to_bytes(4, "little", signed=True),
+                b"operator\x00",
+            )
+        )
+
+    def test_genparams_accepts_completely_omitted_comments(self):
+        block = self.block_without_comments()
+
+        parsed = otdrparser.parse_genparams_block(io.BytesIO(block), len(block))
+
+        self.assertEqual(parsed["fiber_type"], 657)
+        self.assertEqual(parsed["wavelength"], 1310)
+        self.assertEqual(parsed["operator"], "operator")
+        self.assertEqual(parsed["comments"], "")
+
+    def test_genparams_rejects_unterminated_comments(self):
+        block = self.block_without_comments() + b"unterminated"
+
+        with self.assertRaisesRegex(
+            otdrparser.OTDRParserError,
+            "Unexpected end of file while reading a string",
+        ):
+            otdrparser.parse_genparams_block(io.BytesIO(block), len(block))
+
+
 if __name__ == "__main__":
     unittest.main()

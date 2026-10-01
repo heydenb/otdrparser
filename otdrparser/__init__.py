@@ -54,6 +54,7 @@ FIBER_TYPES = {
     653: "ITU-T G.653 (dispersion-shifted fiber)",
     654: "ITU-T G.654 (1550nm loss-minimzed fiber)",
     655: "ITU-T G.655 (nonzero dispersion-shifted fiber)",
+    657: "ITU-T G.657 (bend-insensitive single-mode fiber)",
 }
 
 BUILD_CONDITIONS = {
@@ -333,6 +334,19 @@ def parse_genparams_block(fp, block_numbytes):
             fiber_type = read_signed2(block_fp)
             if fiber_type in FIBER_TYPES:
                 return fiber_type
+
+    def read_genparams_comments(block_fp):
+        """Read comments when present, tolerating a completely omitted field.
+
+        Some Yokogawa files end the declared GenParams block immediately after
+        the operator string instead of encoding an empty comments string. Keep
+        partially encoded comments strict so genuinely truncated blocks still
+        fail.
+        """
+
+        if block_fp.tell() == block_numbytes:
+            return ""
+        return read_zero_terminated_string(block_fp)
     
 
     block_fp = io.BytesIO(read_exact(fp, block_numbytes))
@@ -352,7 +366,7 @@ def parse_genparams_block(fp, block_numbytes):
         "user_offset": read_signed4(block_fp),
         "user_offset_distance": read_signed4(block_fp),
         "operator": read_zero_terminated_string(block_fp),
-        "comments": read_zero_terminated_string(block_fp),
+        "comments": read_genparams_comments(block_fp),
     }
 
     block_fp.close()
