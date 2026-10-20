@@ -2,6 +2,7 @@
 
 import io
 import pathlib
+import struct
 import sys
 import unittest
 
@@ -10,6 +11,42 @@ import otdrparser
 
 
 TEST_DIRECTORY = pathlib.Path(__file__).parent
+
+
+def rewrite_map(content, *, insert_before=None, inserted_name=None, zero_block=None):
+    """Rewrite fixture Map descriptors without changing their payload bytes."""
+
+    fp = io.BytesIO(content)
+    parsed_map = otdrparser.parse_map_block(fp)
+    entries = [dict(entry) for entry in parsed_map["maps"]]
+
+    if zero_block is not None:
+        next(entry for entry in entries if entry["name"] == zero_block)[
+            "numbytes"
+        ] = 0
+
+    if inserted_name is not None:
+        index = next(
+            index
+            for index, entry in enumerate(entries)
+            if entry["name"] == insert_before
+        )
+        entries.insert(
+            index,
+            {"name": inserted_name, "version": "2.0", "numbytes": 0},
+        )
+
+    descriptors = b"".join(
+        entry["name"].encode("latin-1")
+        + b"\x00"
+        + struct.pack("<HI", round(float(entry["version"]) * 100), entry["numbytes"])
+        for entry in entries
+    )
+    map_size = 12 + len(descriptors)
+    rewritten_map = b"Map\x00" + struct.pack(
+        "<HIH", 200, map_size, len(entries) + 1
+    ) + descriptors
+    return rewritten_map + content[parsed_map["numbytes"] :]
 
 
 class FixedParameterTests(unittest.TestCase):
@@ -124,6 +161,89 @@ class CompactParseTests(unittest.TestCase):
         data = otdrparser.parse_compact(io.BytesIO(content))
 
         self.assertIn("data_point_values", data["DataPts"])
+
+
+class ZeroSizedMapEntryTests(unittest.TestCase):
+    FIXTURES = (
+        ("zero-sized-lnkparams-1310.sor", 1310, 12763),
+        ("zero-sized-lnkparams-1550.sor", 1550, 12762),
+    )
+
+    def parse_fixture(self, parser, name):
+        with (TEST_DIRECTORY / name).open("rb") as fp:
+            return parser(fp)
+
+    def assert_zero_sized_fixture(self, parser, name, wavelength, sample_count):
+        data = self.parse_fixture(parser, name)
+
+        self.assertEqual(data["FxdParams"]["wavelength"], wavelength)
+        self.assertEqual(data["DataPts"]["number_of_data_points"], sample_count)
+        self.assertEqual(len(data["Map"]["maps"]), 16)
+        samples = data["DataPts"].get(
+            "data_points", data["DataPts"].get("data_point_values")
+        )
+        self.assertEqual(len(samples), sample_count)
+        self.assertIn(
+            {"name": "LnkParams", "version": "2.0", "numbytes": 0},
+            data["Map"]["maps"],
+        )
+        self.assertNotIn("LnkParams", data)
+
+    def test_parse2_accepts_real_zero_sized_optional_blocks(self):
+        for name, wavelength, sample_count in self.FIXTURES:
+            with self.subTest(name=name):
+                self.assert_zero_sized_fixture(
+                    otdrparser.parse2, name, wavelength, sample_count
+                )
+
+    def test_parse_compact_accepts_real_zero_sized_optional_blocks(self):
+        for name, wavelength, sample_count in self.FIXTURES:
+            with self.subTest(name=name):
+                self.assert_zero_sized_fixture(
+                    otdrparser.parse_compact, name, wavelength, sample_count
+                )
+
+    def test_zero_sized_unknown_optional_block_does_not_consume_payload(self):
+        content = (TEST_DIRECTORY / "example.sor").read_bytes()
+        content = rewrite_map(
+            content,
+            insert_before="DataPts",
+            inserted_name="UnknownEmptyBlock",
+        )
+
+        blocks = otdrparser.parse(io.BytesIO(content))
+        data = {block["name"]: block for block in blocks}
+
+        self.assertIn(
+            {"name": "UnknownEmptyBlock", "version": "2.0", "numbytes": 0},
+            data["Map"]["maps"],
+        )
+        self.assertNotIn("UnknownEmptyBlock", data)
+        self.assertEqual(data["DataPts"]["number_of_data_points"], 15676)
+
+    def test_zero_sized_fxdparams_is_rejected(self):
+        content = rewrite_map(
+            (TEST_DIRECTORY / "example.sor").read_bytes(),
+            zero_block="FxdParams",
+        )
+
+        with self.assertRaisesRegex(
+            otdrparser.OTDRParserError,
+            "Required block 'FxdParams' must have a positive size",
+        ):
+            otdrparser.parse2(io.BytesIO(content))
+
+    def test_zero_sized_datapts_is_rejected(self):
+        content = rewrite_map(
+            (TEST_DIRECTORY / "example.sor").read_bytes(),
+            zero_block="DataPts",
+        )
+
+        with self.assertRaisesRegex(
+            otdrparser.OTDRParserError,
+            "Required block 'DataPts' must have a positive size",
+        ):
+            otdrparser.parse2(io.BytesIO(content))
 
 
 class InvalidInputTests(unittest.TestCase):

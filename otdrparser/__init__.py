@@ -72,6 +72,10 @@ TRACE_TYPES = {
 }
 
 
+_REQUIRED_BLOCK_NAMES = frozenset({"FxdParams", "DataPts"})
+"""SOR blocks that must have a non-empty payload."""
+
+
 EVENT_MAP = {
     "0": "non-reflective",
     "1": "reflective",
@@ -280,9 +284,9 @@ def parse_map_block(fp):
             "version": str(read_unsigned2(fp) / 100),
             "numbytes": read_unsigned4(fp),
         }
-        if entry["numbytes"] <= 0:
+        if entry["numbytes"] == 0 and entry["name"] in _REQUIRED_BLOCK_NAMES:
             raise OTDRParserError(
-                f"Invalid size for block {entry['name']!r}: {entry['numbytes']}"
+                f"Required block {entry['name']!r} must have a positive size"
             )
         data["maps"].append(entry)
 
@@ -641,6 +645,11 @@ def _parse(fp, compact_data_points=False):
         block_name = entry["name"]
         block_numbytes = entry['numbytes']
 
+        # A zero-sized optional map entry is only a descriptor: it has no
+        # corresponding payload and therefore consumes no bytes in the file.
+        if block_numbytes == 0:
+            continue
+
         if block_name == "GenParams":
             block = parse_genparams_block(fp, block_numbytes)
         elif block_name == "SupParams":
@@ -680,7 +689,7 @@ def _parse(fp, compact_data_points=False):
         blocks.append(block)
 
     block_names = {block["name"] for block in blocks}
-    missing = {"FxdParams", "DataPts"} - block_names
+    missing = _REQUIRED_BLOCK_NAMES - block_names
     if missing:
         raise OTDRParserError(
             "Missing required SOR block(s): " + ", ".join(sorted(missing))
